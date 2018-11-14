@@ -1,0 +1,71 @@
+% In-paints the depth image using a cross-bilateral filter. The operation 
+% is implemented via several filterings at various scales. The number of
+% scales is determined by the number of spacial and range sigmas provided.
+% 3 spacial/range sigmas translated into filtering at 3 scales.
+%
+% Args:
+%   imgRgb - the RGB image, a uint8 HxWx3 matrix
+%   imgDepthAbs - the absolute depth map, a HxW double matrix whose values
+%                 indicate depth in meters.
+%   spaceSigmas - (optional) sigmas for the spacial gaussian term.
+%   rangeSigmas - (optional) sigmas for the intensity gaussian term.
+%
+% Returns:
+%    imgDepthAbs - the inpainted depth image.
+pkg load image
+function imgDepthAbs = fill_depth_cross_bf(imgRgb, imgDepthAbs, ...
+    spaceSigmas, rangeSigmas)
+  
+  error(nargchk(2,4,nargin));
+  assert(isa(imgRgb, 'uint8'), 'imgRgb must be uint8');
+  assert(isa(imgDepthAbs, 'double'), 'imgDepthAbs must be a double');
+
+  if nargin < 3
+    spaceSigmas = [12 5 8];
+  end
+  if nargin < 4
+    rangeSigmas = [0.2 0.08 0.02];
+  end
+  
+  assert(numel(spaceSigmas) == numel(rangeSigmas));
+  assert(isa(rangeSigmas, 'double'));
+  assert(isa(spaceSigmas, 'double'));
+  
+  % Create the 'noise' image and get the maximum observed depth.
+  imgIsNoise = imgDepthAbs == 0 | imgDepthAbs == 10;
+  maxDepthObs = max(imgDepthAbs(~imgIsNoise));
+  
+  % Convert the depth image to uint8.
+  imgDepth = imgDepthAbs ./ maxDepthObs;
+  imgDepth(imgDepth > 1) = 1;
+  imgDepth = uint8(imgDepth * 255);
+  
+  % Run the cross-bilateral filter.
+  if ispc
+    imgDepthAbs = mex_cbf_windows(imgDepth, rgb2gray(imgRgb), imgIsNoise, spaceSigmas(:), rangeSigmas(:));
+  else
+    imgDepthAbs = mex_cbf(imgDepth, rgb2gray(imgRgb), imgIsNoise, spaceSigmas(:), rangeSigmas(:));
+  end
+  
+  % Convert back to absolute depth (meters).
+  imgDepthAbs = im2double(imgDepthAbs) .* maxDepthObs;
+end
+
+
+% Usage: fill_depth_cross_bf.m depthSource rgbSource depthDestination
+% depthSource is a path to file with the depth map
+% rgbSource is a path to file with corresponding RGB image
+% depthDestination is a desirable path to save filtered depth map
+
+depthSource = argv(){1};
+rgbSource = argv(){2};
+depthDestination = argv(){3};
+imgRgb = imread(rgbSource);
+imgDepth = imread(depthSource);
+maxDepth = 10.0;
+imgDepthAbs = double(imgDepth) ./ 65535 * maxDepth;
+imgDepthAbsFiltered = fill_depth_cross_bf(imgRgb, imgDepthAbs);
+imgDepthAbsFiltered(imgDepthAbsFiltered < 0) = 0;
+imgDepthAbsFiltered(imgDepthAbsFiltered > maxDepth) = maxDepth;
+imgDepthFiltered = uint16(imgDepthAbsFiltered ./ maxDepth * 65535);
+imwrite(imgDepthFiltered, depthDestination);
